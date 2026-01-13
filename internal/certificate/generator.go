@@ -2,6 +2,10 @@ package certificate
 
 import (
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -60,24 +64,67 @@ func Generate(name, regNumber, outputDir string) (string, error) {
 	baseURL := getEnvOrDefault("VERIFICATION_BASE_URL", "https://peaceandhumanity.org/verification")
 	baseURL = strings.TrimRight(baseURL, "/")
 	verifyURL := fmt.Sprintf("%s#%s", baseURL, regNumber)
+
 	qr, err := qrcode.New(verifyURL, getQRLevel(qrLevelStr))
 	if err != nil {
 		return "", fmt.Errorf("QR creation failed: %w", err)
 	}
 
+	// Get QR as image (this gives us black modules on white bg by default)
+	img := qr.Image(qrSize) // qrSize is the pixel size you want
+
+	// Custom colors from .env
+	fgR, _ := strconv.Atoi(getEnvOrDefault("QR_FG_R", "0"))
+	fgG, _ := strconv.Atoi(getEnvOrDefault("QR_FG_G", "0"))
+	fgB, _ := strconv.Atoi(getEnvOrDefault("QR_FG_B", "0"))
+	fgA, _ := strconv.Atoi(getEnvOrDefault("QR_FG_A", "255"))
+
+	bgR, _ := strconv.Atoi(getEnvOrDefault("QR_BG_R", "0"))
+	bgG, _ := strconv.Atoi(getEnvOrDefault("QR_BG_G", "0"))
+	bgB, _ := strconv.Atoi(getEnvOrDefault("QR_BG_B", "0"))
+	bgA, _ := strconv.Atoi(getEnvOrDefault("QR_BG_A", "0"))
+
+	// Create new image with desired background (usually transparent)
+	customImg := image.NewRGBA(image.Rect(0, 0, qrSize, qrSize))
+
+	// Fill background
+	bgColor := color.RGBA{uint8(bgR), uint8(bgG), uint8(bgB), uint8(bgA)}
+	draw.Draw(customImg, customImg.Bounds(), &image.Uniform{C: bgColor}, image.Point{}, draw.Src)
+
+	// Draw QR modules with custom foreground color
+	fgColor := color.RGBA{uint8(fgR), uint8(fgG), uint8(fgB), uint8(fgA)}
+
+	for y := 0; y < qrSize; y++ {
+		for x := 0; x < qrSize; x++ {
+			if img.At(x, y) == color.Black { // original QR uses black for modules
+				customImg.Set(x, y, fgColor)
+			}
+			// Transparent/white pixels stay as background color
+		}
+	}
+
+	// Save the custom image
 	tempQRPath := filepath.Join(outputDir, "temp_qr_"+regNumber+".png")
-	if err := qr.WriteFile(qrSize, tempQRPath); err != nil {
-		return "", fmt.Errorf("QR file write failed: %w", err)
+	f, err := os.Create(tempQRPath)
+	if err != nil {
+		return "", fmt.Errorf("cannot create temp QR file: %w", err)
+	}
+	defer f.Close()
+
+	if err := png.Encode(f, customImg); err != nil {
+		return "", fmt.Errorf("cannot encode custom QR: %w", err)
 	}
 	defer os.Remove(tempQRPath)
 
 	// ── Create PDF ──────────────────────────────────────────────────────────
-	pdf := gofpdf.New("L", "mm", "", "")
-	pdf.SetAutoPageBreak(false, 0)
+	pdf := gofpdf.NewCustom(&gofpdf.InitType{
+		OrientationStr: "L",
+		UnitStr:        "mm",
+		Size:           gofpdf.SizeType{Wd: pageHeight, Ht: pageWidth}, // ← try reversed!
+	})
 	pdf.SetMargins(0, 0, 0)
-
-	// Landscape workaround
-	pdf.AddPageFormat("L", gofpdf.SizeType{Wd: pageHeight, Ht: pageWidth})
+	pdf.SetAutoPageBreak(false, 0)
+	pdf.AddPage()
 
 	// Full-page background image
 	if templatePath != "" {

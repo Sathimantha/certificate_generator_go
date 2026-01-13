@@ -117,20 +117,33 @@ func Generate(name, regNumber, outputDir string) (string, error) {
 	defer os.Remove(tempQRPath)
 
 	// ── Create PDF ──────────────────────────────────────────────────────────
+	// Keep the working reversed setup (this forces landscape correctly)
 	pdf := gofpdf.NewCustom(&gofpdf.InitType{
 		OrientationStr: "L",
 		UnitStr:        "mm",
-		Size:           gofpdf.SizeType{Wd: pageHeight, Ht: pageWidth}, // ← try reversed!
+		Size: gofpdf.SizeType{
+			Wd: pageHeight, // smaller value
+			Ht: pageWidth,  // larger value
+		},
 	})
+
 	pdf.SetMargins(0, 0, 0)
 	pdf.SetAutoPageBreak(false, 0)
 	pdf.AddPage()
 
-	// Full-page background image
+	// Safety buffer to avoid edge clipping (adjust 1.0–3.0 mm based on testing)
+	const safety = 1.0
+
 	if templatePath != "" {
 		if _, err := os.Stat(templatePath); err == nil {
-			pdf.ImageOptions(templatePath, 0, 0, pageWidth, pageHeight, false,
-				gofpdf.ImageOptions{ImageType: "", ReadDpi: false}, 0, "")
+			pdf.ImageOptions(
+				templatePath,
+				safety, safety, // shift inward a tiny bit from left/top
+				pageWidth-safety*2, pageHeight-safety*2, // shrink very slightly to fit inside safety zone
+				false,
+				gofpdf.ImageOptions{ImageType: "", ReadDpi: false},
+				0, "",
+			)
 		} else {
 			return "", fmt.Errorf("template image not found: %s", templatePath)
 		}

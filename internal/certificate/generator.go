@@ -24,11 +24,10 @@ func Generate(name, regNumber, outputDir string) (string, error) {
 	dpi, _ := strconv.ParseFloat(getEnvOrDefault("DPI", "300"), 64)
 
 	// Calculate page size in mm from pixels and DPI
-	// Formula: mm = (pixels / DPI) * 25.4
 	pageWidth := (templateWidthPx / dpi) * 25.4
 	pageHeight := (templateHeightPx / dpi) * 25.4
 
-	// Ensure landscape orientation (width must be greater than height)
+	// Ensure landscape orientation
 	if pageWidth < pageHeight {
 		pageWidth, pageHeight = pageHeight, pageWidth
 	}
@@ -37,6 +36,7 @@ func Generate(name, regNumber, outputDir string) (string, error) {
 	fmt.Printf("Template: %.0fx%.0f px @ %.0f DPI → PDF: %.2fx%.2f mm\n",
 		templateWidthPx, templateHeightPx, dpi, pageWidth, pageHeight)
 
+	// ── Text positioning & styling ──────────────────────────────────────────
 	nameSize, _ := strconv.ParseFloat(getEnvOrDefault("NAME_SIZE", "42"), 64)
 	nameLeft, _ := strconv.ParseFloat(getEnvOrDefault("NAME_LEFT", "50"), 64)
 	nameTop, _ := strconv.ParseFloat(getEnvOrDefault("NAME_TOP", "70"), 64)
@@ -57,7 +57,9 @@ func Generate(name, regNumber, outputDir string) (string, error) {
 	qrLevelStr := getEnvOrDefault("QR_ERROR_CORRECTION", "M")
 
 	// ── Generate QR ─────────────────────────────────────────────────────────
-	verifyURL := fmt.Sprintf("https://peaceandhumanity.org/verification#%s", regNumber)
+	baseURL := getEnvOrDefault("VERIFICATION_BASE_URL", "https://peaceandhumanity.org/verification")
+	baseURL = strings.TrimRight(baseURL, "/")
+	verifyURL := fmt.Sprintf("%s#%s", baseURL, regNumber)
 	qr, err := qrcode.New(verifyURL, getQRLevel(qrLevelStr))
 	if err != nil {
 		return "", fmt.Errorf("QR creation failed: %w", err)
@@ -69,13 +71,12 @@ func Generate(name, regNumber, outputDir string) (string, error) {
 	}
 	defer os.Remove(tempQRPath)
 
-	// ── Create PDF with gofpdf (supports absolute positioning) ──────────────
-	// gofpdf has a quirk - for landscape, we need to swap Wd and Ht in SizeType
+	// ── Create PDF ──────────────────────────────────────────────────────────
 	pdf := gofpdf.New("L", "mm", "", "")
 	pdf.SetAutoPageBreak(false, 0)
 	pdf.SetMargins(0, 0, 0)
 
-	// Add page with swapped dimensions (gofpdf bug workaround)
+	// Landscape workaround
 	pdf.AddPageFormat("L", gofpdf.SizeType{Wd: pageHeight, Ht: pageWidth})
 
 	// Full-page background image
@@ -88,29 +89,20 @@ func Generate(name, regNumber, outputDir string) (string, error) {
 		}
 	}
 
-	// Name overlay with absolute positioning
+	// ── Name (fixed left position - no centering) ───────────────────────────
 	pdf.SetFont(fontFamily, "B", nameSize)
 	pdf.SetTextColor(nameR, nameG, nameB)
 	pdf.SetXY(nameLeft, nameTop)
+	pdf.Cell(0, nameSize, name) // 0 = auto width, no forced centering
 
-	// Get the width of the text to center it properly
-	nameWidth := pdf.GetStringWidth(name)
-	centerX := nameLeft - (nameWidth / 2)
-	pdf.SetX(centerX)
-	pdf.Cell(nameWidth, nameSize, name)
-
-	// Reg. No overlay
+	// ── Registration Number (fixed left position - no centering) ────────────
 	regText := "Registration Number : " + regNumber
 	pdf.SetFont(fontFamily, "", regSize)
 	pdf.SetTextColor(regR, regG, regB)
 	pdf.SetXY(regLeft, regTop)
+	pdf.Cell(0, regSize, regText)
 
-	regWidth := pdf.GetStringWidth(regText)
-	centerRegX := regLeft - (regWidth / 2)
-	pdf.SetX(centerRegX)
-	pdf.Cell(regWidth, regSize, regText)
-
-	// QR overlay - convert pixels to mm for display
+	// ── QR Code ─────────────────────────────────────────────────────────────
 	qrSizeMM := float64(qrSize) * 25.4 / dpi
 	if _, err := os.Stat(tempQRPath); err == nil {
 		pdf.ImageOptions(tempQRPath, qrLeft, qrTop, qrSizeMM, qrSizeMM, false,
@@ -118,7 +110,7 @@ func Generate(name, regNumber, outputDir string) (string, error) {
 	}
 
 	// ── Save PDF ────────────────────────────────────────────────────────────
-	filename := sanitize(regNumber + " - " + name + ".pdf")
+	filename := sanitize(regNumber + ".pdf")
 	outputPath := filepath.Join(outputDir, filename)
 
 	err = pdf.OutputFileAndClose(outputPath)

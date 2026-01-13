@@ -1,3 +1,4 @@
 .env
 generated_certificates/
 certgen
+data
